@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Frontend Service - React Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    networks:
+      - bedrock-network
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
+  # API Gateway - Python FastAPI
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8000:8000"
+    environment:
+      - BEDROCK_SERVICE_URL=http://bedrock-service:9000
+    networks:
+      - bedrock-network
+    depends_on:
+      - bedrock-service
+    restart: unless-stopped
+
+  # Bedrock Service - Go Application
+  bedrock-service:
+    build:
+      context: ./bedrock-service
+      dockerfile: Dockerfile
+    container_name: bedrock-service
+    ports:
+      - "9000:9000"
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    networks:
+      - bedrock-network
+    restart: unless-stopped
+
+networks:
+  bedrock-network:
+    driver: bridge
+    name: bedrock-network

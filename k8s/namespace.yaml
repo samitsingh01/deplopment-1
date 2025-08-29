@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bedrock-app
+  labels:
+    name: bedrock-app
+    environment: development

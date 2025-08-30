@@ -10,26 +10,29 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(title="API Gateway", version="1.0.0")
+app = FastAPI(title="API Gateway", version="2.0.0")
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Get Bedrock service URL from environment
-BEDROCK_SERVICE_URL = os.getenv("BEDROCK_SERVICE_URL", "http://localhost:9000")
+# Service URLs
+CACHE_SERVICE_URL = os.getenv("CACHE_SERVICE_URL", "http://cache-service:5000")
+BEDROCK_SERVICE_URL = os.getenv("BEDROCK_SERVICE_URL", "http://bedrock-service:9000")
 
 # Request/Response models
 class ChatRequest(BaseModel):
     message: str
+    useCache: bool = True
 
 class ChatResponse(BaseModel):
     response: str
+    cached: bool = False
 
 class HealthResponse(BaseModel):
     status: str
@@ -38,7 +41,11 @@ class HealthResponse(BaseModel):
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "API Gateway is running", "version": "1.0.0"}
+    return {
+        "message": "API Gateway is running", 
+        "version": "2.0.0",
+        "features": ["caching", "bedrock-integration"]
+    }
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -48,64 +55,95 @@ async def health_check():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """
-    Forward chat requests to the Bedrock service
+    Forward chat requests to the Cache service (which handles Bedrock)
     """
     try:
         logger.info(f"Received chat request: {request.message[:50]}...")
+        logger.info(f"Use cache: {request.useCache}")
         
-        # Forward request to Bedrock service
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Forward to cache service
+        async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
-                f"{BEDROCK_SERVICE_URL}/generate",
-                json={"prompt": request.message}
+                f"{CACHE_SERVICE_URL}/generate",
+                json={
+                    "prompt": request.message,
+                    "useCache": request.useCache
+                }
             )
             
             if response.status_code != 200:
-                logger.error(f"Bedrock service returned status {response.status_code}")
+                logger.error(f"Cache service returned status {response.status_code}")
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail="Error from Bedrock service"
+                    detail="Error from cache service"
                 )
             
             result = response.json()
-            logger.info("Successfully received response from Bedrock service")
+            logger.info(f"Response received (cached: {result.get('cached', False)})")
             
-            return ChatResponse(response=result.get("response", "No response generated"))
+            return ChatResponse(
+                response=result.get("response", "No response generated"),
+                cached=result.get("cached", False)
+            )
             
     except httpx.RequestError as e:
-        logger.error(f"Error connecting to Bedrock service: {str(e)}")
-        raise HTTPException(
-            status_code=503,
-            detail="Bedrock service is unavailable"
-        )
+        logger.error(f"Error connecting to cache service: {str(e)}")
+        # Fallback to direct Bedrock call
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{BEDROCK_SERVICE_URL}/generate",
+                    json={"prompt": request.message}
+                )
+                result = response.json()
+                return ChatResponse(
+                    response=result.get("response", "No response generated"),
+                    cached=False
+                )
+        except:
+            raise HTTPException(status_code=503, detail="Services unavailable")
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error"
-        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/services/status")
 async def services_status():
-    """
-    Check the status of all backend services
-    """
+    """Check the status of all backend services"""
     services = {
         "api-gateway": "healthy",
+        "cache-service": "unknown",
         "bedrock-service": "unknown"
     }
     
+    # Check cache service
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{CACHE_SERVICE_URL}/health")
+            if response.status_code == 200:
+                services["cache-service"] = "healthy"
+    except:
+        services["cache-service"] = "unreachable"
+    
+    # Check bedrock service
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{BEDROCK_SERVICE_URL}/health")
             if response.status_code == 200:
                 services["bedrock-service"] = "healthy"
-            else:
-                services["bedrock-service"] = "unhealthy"
     except:
         services["bedrock-service"] = "unreachable"
     
     return {"services": services}
+
+@app.delete("/cache")
+async def clear_cache():
+    """Clear the cache"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.delete(f"{CACHE_SERVICE_URL}/cache")
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn

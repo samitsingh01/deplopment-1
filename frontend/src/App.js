@@ -13,8 +13,8 @@ function App() {
 
     setLoading(true);
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-      const result = await axios.post(`${apiUrl}/chat`, {
+      // Use relative path for API
+      const result = await axios.post('/api/chat', {
         message: message
       });
       setResponse(result.data.response);

@@ -10,7 +10,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_API_URL=http://api-gateway:8000
     networks:
       - bedrock-network
     depends_on:
@@ -26,12 +26,45 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - CACHE_SERVICE_URL=http://cache-service:5000
       - BEDROCK_SERVICE_URL=http://bedrock-service:9000
     networks:
       - bedrock-network
     depends_on:
+      - cache-service
       - bedrock-service
     restart: unless-stopped
+
+  # Cache Service - Node.js with Redis
+  cache-service:
+    build:
+      context: ./cache-service
+      dockerfile: Dockerfile
+    container_name: cache-service
+    ports:
+      - "5000:5000"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - BEDROCK_SERVICE_URL=http://bedrock-service:9000
+    networks:
+      - bedrock-network
+    depends_on:
+      - redis
+      - bedrock-service
+    restart: unless-stopped
+
+  # Redis Database
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - bedrock-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
 
   # Bedrock Service - Go Application
   bedrock-service:
@@ -53,3 +86,7 @@ networks:
   bedrock-network:
     driver: bridge
     name: bedrock-network
+
+volumes:
+  redis-data:
+    driver: local

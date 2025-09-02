@@ -75,9 +75,9 @@ func NewBedrockClient() (*BedrockClient, error) {
     // Create Bedrock client
     client := bedrockruntime.NewFromConfig(cfg)
     
-    // Define available models based on your screenshot (prioritized by performance/cost)
+    // Define available models with enhanced context handling
     availableModels := []ModelInfo{
-        // Claude 3.5 models (best performance)
+        // Claude 3.5 models (best for conversation memory)
         {ID: "anthropic.claude-3-5-sonnet-20241022-v2:0", Name: "Claude 3.5 Sonnet v2", MessageAPI: true},
         {ID: "anthropic.claude-3-5-sonnet-20240620-v1:0", Name: "Claude 3.5 Sonnet", MessageAPI: true},
         {ID: "anthropic.claude-3-5-haiku-20241022-v1:0", Name: "Claude 3.5 Haiku", MessageAPI: true},
@@ -159,11 +159,11 @@ func (bc *BedrockClient) GetAvailableModels() []string {
     return available
 }
 
-// GenerateText calls Amazon Bedrock to generate text
+// GenerateText calls Amazon Bedrock with enhanced context handling
 func (bc *BedrockClient) GenerateText(prompt string, preferredModel string, maxTokens int, temperature float64) (string, string, error) {
     // Set defaults
     if maxTokens == 0 {
-        maxTokens = 1000
+        maxTokens = 2000 // Increased for better responses with context
     }
     if temperature == 0 {
         temperature = 0.7
@@ -209,11 +209,17 @@ func (bc *BedrockClient) GenerateText(prompt string, preferredModel string, maxT
         var requestBody map[string]interface{}
         
         if model.MessageAPI {
-            // New message API format for Claude 3+ models
+            // Enhanced system prompt for better context understanding
+            systemPrompt := "You are a helpful AI assistant with access to conversation history and uploaded files. " +
+                           "When responding, consider the full context provided, including previous conversations and any file content. " +
+                           "If file content is mentioned in the context, analyze and reference it appropriately in your response. " +
+                           "Be conversational, helpful, and maintain continuity with previous interactions."
+            
             requestBody = map[string]interface{}{
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": maxTokens,
-                "messages": []map[string]string{
+                "system": systemPrompt,
+                "messages": []map[string]interface{}{
                     {
                         "role": "user",
                         "content": prompt,
@@ -222,9 +228,11 @@ func (bc *BedrockClient) GenerateText(prompt string, preferredModel string, maxT
                 "temperature": temperature,
             }
         } else {
-            // Legacy format for Claude v2 and earlier
+            // Enhanced legacy format with better context handling
+            enhancedPrompt := fmt.Sprintf("\n\nHuman: You are a helpful AI assistant with conversation memory and file analysis capabilities. Please provide thoughtful, contextual responses based on the information provided.\n\n%s\n\nAssistant:", prompt)
+            
             requestBody = map[string]interface{}{
-                "prompt": fmt.Sprintf("\n\nHuman: %s\n\nAssistant:", prompt),
+                "prompt": enhancedPrompt,
                 "max_tokens_to_sample": maxTokens,
                 "temperature": temperature,
             }
@@ -296,9 +304,10 @@ func healthHandler(bc *BedrockClient) http.HandlerFunc {
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
     response := map[string]string{
-        "message": "Bedrock Service is running",
-        "version": "2.0.0",
-        "documentation": "POST /generate with {\"prompt\": \"your prompt\", \"model\": \"optional model preference\"}",
+        "message": "Enhanced Bedrock Service is running",
+        "version": "3.0.0",
+        "features": "conversation-context, file-analysis, multi-model-support",
+        "documentation": "POST /generate with {\"prompt\": \"your prompt with context\", \"model\": \"optional model preference\"}",
     }
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
@@ -320,10 +329,10 @@ func generateHandler(bc *BedrockClient) http.HandlerFunc {
             return
         }
 
-        log.Printf("Received prompt: %s (model preference: %s)", 
-            req.Prompt[:min(50, len(req.Prompt))], req.Model)
+        log.Printf("Received enhanced prompt: %s (model preference: %s)", 
+            req.Prompt[:min(100, len(req.Prompt))], req.Model)
 
-        // Generate text using Bedrock
+        // Generate text using Bedrock with enhanced context
         response, modelUsed, err := bc.GenerateText(req.Prompt, req.Model, req.MaxTokens, req.Temperature)
         if err != nil {
             log.Printf("Error generating text: %v", err)
@@ -349,6 +358,7 @@ func modelsHandler(bc *BedrockClient) http.HandlerFunc {
                 "name":      model.Name,
                 "available": model.Available,
                 "api_type":  map[bool]string{true: "messages", false: "legacy"}[model.MessageAPI],
+                "features":  []string{"conversation-context", "file-analysis"},
             })
         }
         
@@ -367,7 +377,7 @@ func min(a, b int) int {
 }
 
 func main() {
-    log.Println("Starting Bedrock Service v2.0...")
+    log.Println("Starting Enhanced Bedrock Service v3.0...")
     
     // Initialize Bedrock client
     bc, err := NewBedrockClient()
@@ -387,15 +397,17 @@ func main() {
     router.HandleFunc("/models", modelsHandler(bc)).Methods("GET")
     router.HandleFunc("/generate", generateHandler(bc)).Methods("POST")
 
-    // Configure server
+    // Configure server with enhanced timeouts for context processing
     srv := &http.Server{
         Handler:      router,
         Addr:         ":9000",
-        WriteTimeout: 60 * time.Second,  // Increased timeout for longer responses
-        ReadTimeout:  30 * time.Second,
+        WriteTimeout: 120 * time.Second,  // Increased for context processing
+        ReadTimeout:  60 * time.Second,   // Increased for large context
     }
 
-    log.Printf("Bedrock Service started on port 9000 with %d available models", len(bc.GetAvailableModels()))
+    log.Printf("Enhanced Bedrock Service started on port 9000 with %d available models", len(bc.GetAvailableModels()))
+    log.Println("Features: Conversation Context, File Analysis, Multi-Model Support")
+    
     if err := srv.ListenAndServe(); err != nil {
         log.Fatal(err)
     }
